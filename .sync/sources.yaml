@@ -1,0 +1,73 @@
+# Declarative description of every mirror this repository publishes.
+#
+# This file is the single source of truth. tools/mirror.py derives the
+# git-filter-repo invocation, the commit-message rewriting, the per-source
+# mirror branches and the combined branches from it; nothing about the mapping
+# is hard-coded in the workflow.
+#
+# The paths below reproduce what the previous mirror-*.yaml workflows filtered,
+# so this change makes the pipeline configuration-driven without moving any
+# package between repositories.
+#
+# Determinism contract
+# --------------------
+# Both stages below are pure functions of (upstream commit, this file):
+#
+#   1. git-filter-repo rewrites each upstream history. Same input plus same
+#      arguments always yields the same commit ids.
+#   2. tools/combine_history.py replays the filtered histories into one linear
+#      branch. Every replayed commit keeps its original author, committer,
+#      timestamps and message; only its parent is rewritten and its tree is
+#      recomposed. No commit is synthesised, so no wall-clock value ever enters
+#      an object.
+#
+# Rebuilding from scratch therefore reproduces the published branches exactly.
+
+version: 1
+
+sources:
+  autoware_universe:
+    upstream: https://github.com/autowarefoundation/autoware_universe.git
+    ref: main
+    mirror_branch: awf-latest/universe
+    # Kept non-forced on purpose: a failed push is the alarm that tells us the
+    # filtered history stopped being reproducible.
+    force: false
+    paths:
+      - path: system/autoware_default_adapi_helpers/
+      - path: system/autoware_default_adapi_universe/
+      - path: .github/
+      - path: docs/
+      - regex: ^[^/]*$ # root-level files (LICENSE, NOTICE, ...)
+    message_rules:
+      - pattern: '#(\d+)'
+        replacement: autowarefoundation/autoware_universe#\1
+
+  autoware_core:
+    upstream: https://github.com/autowarefoundation/autoware_core.git
+    ref: main
+    mirror_branch: awf-latest/core
+    force: true
+    paths:
+      - path: api/
+    message_rules:
+      - pattern: '#(\d+)'
+        replacement: autowarefoundation/autoware_core#\1
+
+combined:
+  awf-combined-latest:
+    # Members are replayed into one linear history ordered by committer date.
+    # Ties break on member order then original commit id, so the ordering is
+    # total and stable.
+    order_by: committer_date
+    force: true
+    # Each member is filed under the name of its upstream, which keeps the two
+    # histories from sharing a directory and makes provenance visible in the
+    # path. Everything else at the root comes from autoware_universe.
+    members:
+      - source: autoware_universe
+        rename:
+          system: universe/system
+      - source: autoware_core
+        rename:
+          api: core/api
